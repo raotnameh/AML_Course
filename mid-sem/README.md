@@ -6,10 +6,10 @@
 ```
  pip install -r requirements.txt
 ```
-##### quesiton.pdf has the questions for this assignment.
-##### solution.pdf has the solutions for this assignment.
-##### mid-sem.ipynb has all the required code
-##### utils/ folder has the sved results
+- quesiton.pdf has the questions for this assignment.
+- solution.pdf has the solutions for this assignment.
+- mid-sem.ipynb has all the required code
+- utils/ folder has the saved results
 
 
 
