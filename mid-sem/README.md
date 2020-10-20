@@ -11,7 +11,6 @@
 - ans2.pdf has all the observations for question 2.
 - answer.pdf is combined pdf of ans1 and ans2.
 - mid-sem.ipynb has all the required code.
-- utils/ folder has the saved results for question 2.
-
+- utils/ folder has the saved results for question 2. *.json* files contains the required metrics in question 2. *.png* has the t-SNE plots for eaach of the case in the question 2.
 
 ###### For any quries please contact hemantya@iiitd.ac.in
