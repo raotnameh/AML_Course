@@ -8,9 +8,8 @@
 ```
 - quesiton.pdf has the questions for this assignment.
 - solution.pdf has all the derivations of question 1 and observations for question 2 for this assignment.
-- mid-sem.ipynb has all the required code
-- utils/ folder has the saved results
-
+- mid-sem.ipynb has all the required code.
+- utils/ folder has the saved results for question 2.
 
 
 ###### For any quries please contact hemantya@iiitd.ac.in
