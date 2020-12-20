@@ -7,12 +7,16 @@ Original file is located at
     https://colab.research.google.com/drive/1wEub0Lz0qr04Jmsr9n913fcSZ0bqV17Z
 """
 
+
+from config import *
 import torch
 import torch.nn as nn
 import torchvision
 from torchvision import datasets, models, transforms
 from torch.autograd import Variable
 import torch.nn.functional as F
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 #Setting the variables
 numClasses=10
@@ -21,6 +25,17 @@ numCodeBooks=12
 lenCodeWord=12
 softAssgnAlpha=20.0  # Soft assignment Scaling Factor
 beta = 4
+batchSize=500
+totalEpochs=300
+lam_1=0.1
+lam_2=0.1
+T=0.5
+
+if torch.cuda.is_available():
+  print("CUDA available")
+  device=torch.device('cuda')
+else:
+  device=torch.device('cpu')
 
 vggModel=models.vgg16_bn(pretrained=True)
 for child in vggModel.children():
@@ -43,19 +58,17 @@ class GPQModel(nn.Module):
 
         self.firstPartVGG=requiredLayers1
         self.secondPartVGG=requiredLayers2
-        self.globalAvgPooling1=nn.AvgPool2d(56,stride=2)
-        self.globalAvgPooling2=nn.AvgPool2d(56,stride=2)
+        self.globalAvgPooling1=nn.AvgPool2d(8,stride=2)
+        self.globalAvgPooling2=nn.AvgPool2d(8,stride=2)
         self.finalFeatureLayer=nn.Linear(768,lenCodeWord*numCodeBooks)
 
-    def featureExtractor(self,input,finetune):
+    def featureExtractor(self,input,finetune=True):
         #Extracted Features Portion
         for child in self.firstPartVGG.children():
-            print(child)
             for param in child.parameters():
               param.requires_grad = finetune
         
         for child in self.secondPartVGG.children():
-            print(child)
             for param in child.parameters():
               param.requires_grad = finetune
 
@@ -64,7 +77,7 @@ class GPQModel(nn.Module):
         intermediate2=self.secondPartVGG(intermediate1)
         pooledOutput2=self.globalAvgPooling2(intermediate2)
         concatenatedOutput=torch.cat((pooledOutput1,pooledOutput2),1)
-        concatenatedOutput=torch.reshape(concatenatedOutput,(1,768))
+        concatenatedOutput=torch.reshape(concatenatedOutput,(batchSize,768))
         extractedFeatures=self.finalFeatureLayer(concatenatedOutput)
         return extractedFeatures
 
@@ -72,14 +85,20 @@ class GPQModel(nn.Module):
         #Classifier portion
         x=torch.split(extractedFeatures,numCodeBooks,dim=1)
         y=torch.split(C,numCodeBooks,dim=1)
+        #print("Shape : x: ",len(x),"  shape : ",x[0].shape," y : ",len(y),"  shape : ",y[0].shape)
         for codeBookIndex in range(numCodeBooks):
-            currentResult=torch.matmul(x[codeBookIndex], torch.transpose(y[codeBookIndex], 0, 1))
+            currentResult=torch.reshape(torch.matmul(x[codeBookIndex], torch.transpose(y[codeBookIndex], 0, 1)),(batchSize,1,10))
+            
+            #print("Current result : ",currentResult.shape)
             if codeBookIndex==0:
                 result=currentResult
             else:
-                result=torch.cat((result,currentResult),0)
-        logits=torch.mean(result,0)
-
+                result=torch.cat((result,currentResult),1)
+            #print("result : ",result.shape)
+        
+        logits=torch.mean(result,1)
+        #print("Logits shape : ",logits.shape)
+        
         return logits
 
 """
@@ -92,8 +111,10 @@ print(logits.shape)
 """
 
 def flipGradient(x,l=1.0):
-    positivePath=torch.tensor(x*torch.tensor(l+1).type(torch.FloatTensor),requires_grad=False)
-    negativePath=torch.tensor(-x*torch.tensor(l).type(torch.FloatTensor),requires_grad=True)
+    #positivePath=torch.tensor(x*torch.tensor(l+1).type(torch.FloatTensor),requires_grad=False)
+    #negativePath=torch.tensor(-x*torch.tensor(l).type(torch.FloatTensor),requires_grad=True)
+    positivePath=(x*torch.tensor(l+1)).clone().detach().requires_grad_(False)
+    negativePath=(-x*torch.tensor(l)).clone().detach().requires_grad_(True)
     return positivePath+negativePath
 
 def IntraNorm(featureDescriptor,numCodeBooks):
@@ -131,9 +152,9 @@ def softAssignment(zValue, xValue, numCodeBooks,alpha):
         #print("firstDim : ",firstDim,"  secondDim : ",secondDim)
         yy=torch.reshape(y[codeBookIndex].unsqueeze(0),(firstDim,secondDim,1))
         #print("Between yy : ",yy.shape)
-        yy=yy.repeat(1,1,sizeX).permute(2,1,0)
+        yy=yy.repeat(1,1,sizeX).permute(2,1,0).to(device)
         #print("End yy : ",yy.shape)
-        diff=1-torch.sum(torch.mul(xx,yy),dim=1)
+        diff=1-torch.sum(torch.mul(xx.to(device),yy),dim=1)
         #print("Diff shape : ",diff.shape)
         softmaxFunction=nn.Softmax(dim=1)
         softmaxOutput=softmaxFunction(diff*(-alpha))
@@ -157,16 +178,26 @@ print(SoftAssignment(z_,x_,numCodeBooks,alpha).shape)
 """
 
 def NPQLoss(labelsSimilarity,embeddingX,embeddingQ,numCodeBooks,regLambda=0.002):
+    
     regAnchor=torch.mean(torch.sum(torch.square(embeddingX),dim=1))
     regPositive=torch.mean(torch.sum(torch.square(embeddingQ),dim=1))
-    l2Loss=torch.mul(0.25*reg_lambda,regAnchor+regPositive)
+    l2Loss=torch.mul(0.25*regLambda,regAnchor+regPositive)
+    #print("l2Loss : ",l2Loss)
     
     embeddingX=F.normalize(embeddingX,dim=1,p=2)
     embeddingQ=F.normalize(embeddingQ,dim=1,p=2)
-    logits=torch.matmul(embeddingX,embeddingQ)*numCodeBooks
+    #print(type(embeddingX)," , ",type(embeddingQ))
+    #print("Shape embeddingsX : ",embeddingX.shape," , embeddingQ : ",embeddingQ.shape)
+    logits=torch.matmul(embeddingX,torch.transpose(embeddingQ,0,1))
+    #print("Logits shape : ",logits.shape)
+    #print("Similarity : ",labelsSimilarity.shape)
+    #print("Log softmax : ",F.log_softmax(logits,-1).shape)
 
-    lossValue=torch.sum(-labelsSimilarity * F.log_softmax(logits,-1),-1)
+    #lossValue=torch.sum(-torch.from_numpy(labelsSimilarity) * F.log_softmax(logits,-1),-1)
+    lossValue=torch.mean(-labelsSimilarity * F.log_softmax(logits,-1),-1)
+    #print("Loss value : ",lossValue)
     meanLoss=lossValue.mean()
+    #print("Mean loss : ",meanLoss)
 
     return meanLoss+l2Loss
   
@@ -176,11 +207,14 @@ def CLSLoss(label,logits):
     return meanLoss
 
 def SMELoss(features,centroids,numSegments):
+    #print("features shape : ",features.shape,"  centroids shape : ",centroids.shape)
     x=torch.split(features,numSegments,dim=1)
-    y=torch.split(centroids,numSegments,dim=0)
-
+    y=torch.split(centroids,numSegments,dim=1)
+    #print("x : ",x[0].shape," y : ",y[0].shape)
+    
     for segmentIndex in range(numSegments):
-        multipliedOutput=torch.matmul(x[i],y[i])
+        multipliedOutput=torch.matmul(x[segmentIndex],torch.transpose(y[segmentIndex],0,1))
+        firstDim,secondDim=multipliedOutput.shape
         currentLogits=torch.reshape(multipliedOutput.unsqueeze(0),(firstDim,secondDim,1))
         
         if segmentIndex==0:
@@ -192,66 +226,36 @@ def SMELoss(features,centroids,numSegments):
     lossValue=torch.sum(logits*(torch.log(logits+1e-5)),1)
     return torch.mean(lossValue)
 
-"""
-x=torch.randn(1,3,224,224)
-Net=GPQModel(10,16,12,12)
-alpha=20.0
-beta = 4
-extractedFeatures=gpqModel.featureExtractor(input,True)
-logits=gpqModel.classifier(extractedFeatures,gpqModel.C)
-print(extractedFeatures.shape)
-print(logits.shape)
 
-#Net = GPQModel(training=training_flag)
-Prototypes = IntraNorm(Net.C, numCodeBooks)
-Z = SoftAssignment(Prototypes, Net.Z, n_book, alpha)
-
-feature_S = Net.featureExtractor(x,True)
-feature_T = flipGradient(Net.featureExtractor(x_T))
-
-feature_S = IntraNorm(feature_S, numCodeBooks)
-feature_T = IntraNorm(feature_T, numCodeBooks)
-
-descriptor_S = SoftAssignment(Z, feature_S, numCodeBooks, alpha)
-
-logits_S = Net.classifier(feature_S * beta, tf.transpose(Prototypes) * beta)
-
-hash_loss = N_PQ_loss(labels_Similarity=label_Mat, embeddings_x=feature_S, embeddings_q=descriptor_S, n_book)
-cls_loss = CLS_loss(label, logits_S)
-entropy_loss = SME_loss(feature_T * beta, tf.transpose(Prototypes) * beta, n_book)
-
-
-import tensorflow as tf
-image = tf.zeros([16,12])
-image1=tf.zeros([10,12])
-image2=tf.ones([10,12])
-size_x=16
-size_y=10
-xx=tf.expand_dims(image,-1)
-xx = tf.tile(xx, tf.stack([1, 1, size_y]))
-print(xx.shape)
-yy = tf.expand_dims(image1, -1)
-yy = tf.tile(yy, tf.stack([1, 1, size_x]))
-yy = tf.transpose(yy, perm=[2, 1, 0])
-print(yy.shape)
-mult=tf.multiply(xx,yy)
-diff=1-tf.reduce_sum(tf.multiply(xx,yy),1)
-diff=tf.nn.softmax(diff*(-softAssgnAlpha), axis=1)
-print("Softmax : ",diff.shape)
-print(image1.shape)
-oft_des_tmp = tf.matmul(diff, image1, transpose_a=False, transpose_b=False)
-print(oft_des_tmp.shape)
-soft_des_tmp1 = tf.matmul(diff, image1, transpose_a=False, transpose_b=False)
-soft_des_tmp2 = tf.matmul(diff, image2, transpose_a=False, transpose_b=False)
-descriptor = tf.concat([soft_des_tmp1, soft_des_tmp2], axis=1)
-print(descriptor.shape)
-
-x=tf.split(descriptor,12, 1)
-for i in range(12):
-        norm_tmp = tf.nn.l2_normalize(x[i], axis=1)
-        if i==0:
-            innorm = norm_tmp
+def SMELossModified(features,centroids,numSegments):
+    #print("features shape : ",features.shape,"  centroids shape : ",centroids.shape)
+    numAugmentations=len(features)
+    y=torch.split(centroids,numSegments,dim=1)
+    
+    for augIndex in range(numAugmentations):
+        x=torch.split(features[augIndex]*beta,numSegments,dim=1)
+        
+        for segmentIndex in range(numSegments):
+            multipliedOutput=torch.matmul(x[segmentIndex],torch.transpose(y[segmentIndex],0,1))
+            firstDim,secondDim=multipliedOutput.shape
+            currentLogits=torch.reshape(multipliedOutput.unsqueeze(0),(firstDim,secondDim,1))
+            
+            if segmentIndex==0:
+                logits=currentLogits
+            else:
+                logits=torch.cat((logits,currentLogits),2)
+    
+        logits=F.softmax(torch.mean(logits,2),dim=1)
+        if augIndex==0:
+            avgLogits=logits
         else:
-            innorm = tf.concat([innorm, norm_tmp], axis=1)
-print(innorm.shape)
-"""
+            avgLogits=avgLogits+logits
+            
+    #Computing average predictions obtained
+    avgLogits=avgLogits/numAugmentations
+    
+    #Applying temperature sharpening procedure
+    sharpenedPredictions=avgLogits**(1/T)    
+    logits=sharpenedPredictions/sharpenedPredictions.sum(dim=1,keepdim=True)
+    lossValue=torch.sum(logits*(torch.log(logits+1e-5)),1)
+    return torch.mean(lossValue)

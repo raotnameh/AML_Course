@@ -1,15 +1,13 @@
 import os
-import tensorflow as tf
 import numpy as np
+from tqdm.auto import tqdm
 import pickle as pk
 import scipy.io
 from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
-
-
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
+import torch
+device = torch.device("cuda:0")
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # Dataset path
 # Source: 5,000, Target: 54,000
@@ -60,5 +58,3 @@ beta = 4
 # lam1, 2: loss function balancing parameters
 lam_1 = 0.1
 lam_2 = 0.1
-
-
