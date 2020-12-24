@@ -6,8 +6,9 @@ import scipy.io
 from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 import torch
-device = torch.device("cuda:0")
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+device = torch.device("cuda")
 # Dataset path
 # Source: 5,000, Target: 54,000
 # Target: 54,000 Query: 1,000
@@ -15,11 +16,10 @@ data_dir = 'data/cifar10'
 
 
 # For training
-ImagNet_pretrained_path = 'models/ImageNet_pretrained'
 model_save_path = 'models/'
 
 # For evaluation
-model_load_path = 'models/48bits_example.ckpt'
+weights_path = 'models/GPQ.pth'
 cifar10_label_sim_path = 'cifar10/cifar10_Similarity.mat'
 
 
@@ -30,10 +30,11 @@ n_DB = 54000
 
 'Hyperparameters for training'
 # Training epochs, 1 epoch represents training all the source data once
-total_epochs = 300
-batch_size = 500
-# save model for every save_term-th epoch
-save_term = 20
+total_epochs = 21
+batchSize = 500
+
+# test and save model for every test_term-th epoch.
+test_term = 20
 
 # length of codeword
 len_code = 12
@@ -56,4 +57,4 @@ beta = 4
 
 # lam1, 2: loss function balancing parameters
 lam_1 = 0.1
-lam_2 = 0.1
+lam_2 = 10

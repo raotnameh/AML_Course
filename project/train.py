@@ -1,101 +1,117 @@
-from model import *
-from data.data_loader import *
 from config import *
-from scipy.sparse import csr_matrix
+from data.data_loader import *
+from model import *
+from utils import *
 import torch.optim as optim
-from sklearn.preprocessing import OneHotEncoder
-
-projectPath='models/dummy/'
-useSavedModel=False
-
-print("Loading the dataset")
-Source_x, Source_y, Target_x = prepare_Data(data_dir, True)
-# Gallery_x, Query_x = prepare_Data(data_dir, False)
-label_Similarity = csr_matrix(scipy.io.loadmat("data/cifar10/cifar10_Similarity.mat")['label_Similarity']).todense()
-print("Data loading finished")
-
-source = torch.utils.data.DataLoader([(Source_x[i], Source_y[i]) for i in range(len(Source_x))],batch_size=batchSize)
-target = torch.utils.data.DataLoader(Target_x,batch_size=batchSize)
-a = torch.utils.data.DataLoader(Source_x,batch_size=batchSize)
-b = torch.utils.data.DataLoader(Source_y,batch_size=batchSize)
-c = torch.utils.data.DataLoader(Target_x,batch_size=batchSize)
-
-print("Loading the models")
-Net = GPQModel()
-Prototypes = IntraNorm(Net.C, numCodeBooks)
-Z = softAssignment(Prototypes,Net.Z,numCodeBooks,softAssgnAlpha)
-optimizer = optim.Adam(Net.parameters(),lr=0.0002,betas=(0.5,0.999))
-
-numLabelledSamples=Source_x.shape[0]
-numUnlabelledSamples=Target_x.shape[0]
-numIterations=int(numLabelledSamples/batchSize)
-startEpoch=0
-allEpochLoss=[]
-
-if useSavedModel:
-    modelFile=projectPath+"saved/GPQModel.pth.tar"
-    checkpoint=torch.load(modelFile)
-    startEpoch=checkpoint['startEpoch']+1
-    Net.load_state_dict(checkpoint['modelStateDict'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    Z=checkpoint['Z']
-    allEpochLoss=checkpoint['allEpochLoss']
-    Prototypes=checkpoint['Prototypes']
-
-for epoch in range(startEpoch,totalEpochs,1):
-    print("Epoch : ",epoch," numIterations : ",numIterations)
-    epochLoss=0
-    for iterationIndex in range(numIterations):
-    #for iterationIndex in range(1):
-        labelledIndices=np.random.choice(numLabelledSamples,size=batchSize,replace=False)
-        unlabelledIndices=np.random.choice(numUnlabelledSamples,size=batchSize,replace=False)
-        
-        XLabelled=Source_x[labelledIndices]
-        YLabelled=Source_y[labelledIndices]
-        XUnlabelled=Target_x[unlabelledIndices]
-        XLabelled=np.asarray(data_augmentation(XLabelled))
-        XLabelled=torch.from_numpy(XLabelled)
-        XUnlabelled=np.asarray(data_augmentation(XUnlabelled))
-        XUnlabelled=torch.from_numpy(XUnlabelled)
-        
-        YLabelled=np.eye(numClasses)[YLabelled]
-        YLabelledMat=np.matmul(YLabelled,YLabelled.transpose())
-        YLabelledMat/=np.sum(YLabelledMat,axis=1,keepdims=True)
-        
-        feature_S=Net.featureExtractor(XLabelled.reshape(batchSize,3,32,32))
-        feature_T=flipGradient(Net.featureExtractor(XUnlabelled.reshape(batchSize,3,32,32).clone().detach()))
-        
-        feature_S=IntraNorm(feature_S,numCodeBooks)
-        feature_T=IntraNorm(feature_T,numCodeBooks)
-        
-        descriptor_S=softAssignment(Z,feature_S,numCodeBooks,softAssgnAlpha)
-        logits_S=Net.classifier(feature_S*beta,Prototypes*beta)
-        hash_loss = NPQLoss(torch.from_numpy(YLabelledMat),feature_S, descriptor_S,numCodeBooks)
-        
-        cls_loss = CLSLoss(torch.from_numpy(YLabelled),logits_S)
-        entropy_loss = SMELoss(feature_T * beta, Prototypes * beta, numCodeBooks)
-        final_loss = hash_loss + lam_1*entropy_loss + lam_2*cls_loss 
-        
-        optimizer.zero_grad()
-        final_loss.backward(retain_graph=True)
-        optimizer.step()
-        
-        epochLoss+=final_loss.item()
-        if iterationIndex==numIterations-1:
-            print("Final loss : ",final_loss," of epoch : ",epoch)
     
-    epochLoss=epochLoss/numIterations
-    allEpochLoss.append(epochLoss)
-    
-    stateToBeSaved={
-      'startEpoch': epoch,
-      'modelStateDict': Net.state_dict(),
-      'optimizer' : optimizer.state_dict(),
-      'Z':Z,
-      'Prototypes':Prototypes,
-      'allEpochLoss':allEpochLoss
-    }
-    
-    if epoch%10==0:
-        checkPointFile=projectPath+"saved/GPQModel"+str(epoch)+".pth.tar"
-        torch.save(stateToBeSaved,checkPointFile)
+if __name__ == '__main__':
+    #Dataloader
+    Source_x, Source_y, Target_x = prepare_Data(data_dir, True)
+    source = torch.utils.data.DataLoader([(Source_x[i], Source_y[i]) for i in range(len(Source_x))],batch_size=batchSize, shuffle=True)
+    target = torch.utils.data.DataLoader(Target_x,batch_size=batchSize,shuffle=True)
+
+    Gallery_x, Query_x = prepare_Data(data_dir, False)
+    gallery = torch.utils.data.DataLoader(Gallery_x,batch_size=2*batchSize)
+    query = torch.utils.data.DataLoader(Query_x,batch_size=2*batchSize)
+    similarity = csr_matrix(scipy.io.loadmat("data/cifar10/cifar10_Similarity.mat")['label_Similarity']).todense()
+
+    #models
+    model = features_(net1, net2).to(device)
+    classifier = classifier_(n_CLASSES, len_code, n_book).to(device)
+    softassignment = softassignment_(len_code, n_book, intn_word).to(device)
+    flipGradient = flipGradient_()
+
+    # optimizer
+    class_optim = optim.Adam(classifier.parameters(),lr=0.002,weight_decay=0.00001,amsgrad=True)
+    model_optim = optim.Adam(model.parameters(),lr=0.0002,weight_decay=0.00001,amsgrad=True)
+    soft_optim = optim.Adam(softassignment.parameters(),lr=0.002,weight_decay=0.00001,amsgrad=True)
+
+    if weights_path:
+        print("Loading weights")
+        weights = torch.load(weights_path)
+        
+        model.load_state_dict(weights['modelStateDict'][0])
+        classifier.load_state_dict(weights['modelStateDict'][1])
+        softassignment.load_state_dict(weights['modelStateDict'][2])
+
+        model_optim.load_state_dict(weights['modelOptimDict'][0])
+        class_optim.load_state_dict(weights['modelOptimDict'][1])
+        soft_optim.load_state_dict(weights['modelOptimDict'][2])
+
+    class_optim.zero_grad()
+    model_optim.zero_grad()
+    soft_optim.zero_grad()
+
+
+    target_ = iter(target)
+    score = 0
+    save = ""
+    for epoch in tqdm(range(total_epochs)):
+        m_,n,o,p = 0,0,0,0
+        model.train()
+        classifier.train()
+        softassignment.train()
+
+        for df, batch in enumerate(source):
+            x, y = batch
+            x = torch.tensor(data_augmentation(x)).to(device)
+            try: 
+                xu = next(target_)
+                xu = torch.tensor(data_augmentation(xu)).to(device)
+            except:
+                target_ = iter(target)
+                xu = next(target_)
+                xu = torch.tensor(data_augmentation(xu)).to(device)
+
+            features = intranorm(model(x.permute(0,3,1,2)), n_book)
+            featuresu = flipGradient(intranorm(model(xu.permute(0,3,1,2)), n_book))
+            quanta = softassignment(features,n_book,alpha)
+            logits = classifier(features *beta)
+
+            y = y.to(device)
+            cls_loss = torch.nn.functional.cross_entropy(logits,y)
+
+            y = torch.eye(n_CLASSES)[y].to(device)
+            entropy_loss = SMELoss(featuresu *beta ,intranorm(classifier.prototypes.state_dict()['weight'] *beta, n_book) , n_book)
+
+            y_ = torch.matmul(y,y.T)
+            y_ /= torch.sum(y_, axis=1, keepdims=True)
+            hash_loss = NPQLoss(y_,features, quanta,n_book)   
+
+            final_loss = hash_loss + lam_1*cls_loss  + lam_2*entropy_loss 
+
+            o += cls_loss.item()
+            m_ += final_loss.item()
+            n += hash_loss.item()
+            p += entropy_loss.item()
+
+            final_loss.backward()
+
+            model_optim.step()
+            soft_optim.step()
+            class_optim.step()
+
+            class_optim.zero_grad()
+            model_optim.zero_grad()
+            soft_optim.zero_grad()
+
+        save += f"Total_loss: {m_/10}\t Hash_loss: {n/10}\t Classsifier_loss: {o/10}\t Entropy_loss: {p/10}"
+
+        if epoch % test_term == 0: 
+            mean_average_precision = test_(similarity, model, classifier, softassignment, gallery, query,Indexing_, pqDist, cat_apcal)
+            save += f"\tmAP_score: {mean_average_precision}"
+            print(f"Total_loss: {m_/10}\t Hash_loss: {n/10}\t Classsifier_loss: {o/10}\t Entropy_loss: {p/10}\tmAP_score: {mean_average_precision}")
+            if mean_average_precision > score:
+                print("Found better validated model")
+                score = mean_average_precision
+                stateToBeSaved={
+                    'modelStateDict': [model.state_dict(),classifier.state_dict(), softassignment.state_dict()],
+                    'modelOptimDict': [model_optim.state_dict(),class_optim.state_dict(), soft_optim.state_dict()],
+                    'score': mean_average_precision,
+                    'epoch': epoch+1}
+                torch.save(stateToBeSaved,f"{model_save_path}/GPQ.pth")
+        else:
+            print(f"Total_loss: {m_/10}\t Hash_loss: {n/10}\t Classsifier_loss: {o/10}\t Entropy_loss: {p/10}")
+        save += '\n'
+        with open("loss.txt", "w") as f:
+            f.write(save)
