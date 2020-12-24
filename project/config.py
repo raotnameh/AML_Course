@@ -7,8 +7,7 @@ from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 import torch
 device = torch.device("cuda:0")
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # Dataset path
 # Source: 5,000, Target: 54,000
 # Target: 54,000 Query: 1,000

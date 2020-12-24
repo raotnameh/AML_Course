@@ -16,7 +16,6 @@ from torchvision import datasets, models, transforms
 from torch.autograd import Variable
 import torch.nn.functional as F
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 #Setting the variables
 numClasses=10
@@ -36,79 +35,6 @@ if torch.cuda.is_available():
   device=torch.device('cuda')
 else:
   device=torch.device('cpu')
-
-vggModel=models.vgg16_bn(pretrained=True)
-for child in vggModel.children():
-   childCounter=0
-   if child.children():
-      requiredLayers1=nn.Sequential(*list(child.children())[:23])
-      requiredLayers2=nn.Sequential(*list(child.children())[24:33])
-   break
-  
-class GPQModel(nn.Module):
-    def __init__(self,numClasses=10,numCodeWords=16,lenCodeWord=12,numCodeBooks=12):
-        super().__init__()
-        self.Z=torch.empty(numCodeWords,numCodeBooks*lenCodeWord)
-        self.Z=nn.init.xavier_normal_(self.Z)
-        self.Z=Variable(self.Z,requires_grad=True)
-
-        self.C=torch.empty(numClasses,numCodeBooks*lenCodeWord)
-        self.C=nn.init.xavier_normal_(self.C)
-        self.C=Variable(self.C,requires_grad=True)
-
-        self.firstPartVGG=requiredLayers1
-        self.secondPartVGG=requiredLayers2
-        self.globalAvgPooling1=nn.AvgPool2d(8,stride=2)
-        self.globalAvgPooling2=nn.AvgPool2d(8,stride=2)
-        self.finalFeatureLayer=nn.Linear(768,lenCodeWord*numCodeBooks)
-
-    def featureExtractor(self,input,finetune=True):
-        #Extracted Features Portion
-        for child in self.firstPartVGG.children():
-            for param in child.parameters():
-              param.requires_grad = finetune
-        
-        for child in self.secondPartVGG.children():
-            for param in child.parameters():
-              param.requires_grad = finetune
-
-        intermediate1=self.firstPartVGG(input)
-        pooledOutput1=self.globalAvgPooling1(intermediate1)
-        intermediate2=self.secondPartVGG(intermediate1)
-        pooledOutput2=self.globalAvgPooling2(intermediate2)
-        concatenatedOutput=torch.cat((pooledOutput1,pooledOutput2),1)
-        concatenatedOutput=torch.reshape(concatenatedOutput,(batchSize,768))
-        extractedFeatures=self.finalFeatureLayer(concatenatedOutput)
-        return extractedFeatures
-
-    def classifier(self,extractedFeatures,C):
-        #Classifier portion
-        x=torch.split(extractedFeatures,numCodeBooks,dim=1)
-        y=torch.split(C,numCodeBooks,dim=1)
-        #print("Shape : x: ",len(x),"  shape : ",x[0].shape," y : ",len(y),"  shape : ",y[0].shape)
-        for codeBookIndex in range(numCodeBooks):
-            currentResult=torch.reshape(torch.matmul(x[codeBookIndex], torch.transpose(y[codeBookIndex], 0, 1)),(batchSize,1,10))
-            
-            #print("Current result : ",currentResult.shape)
-            if codeBookIndex==0:
-                result=currentResult
-            else:
-                result=torch.cat((result,currentResult),1)
-            #print("result : ",result.shape)
-        
-        logits=torch.mean(result,1)
-        #print("Logits shape : ",logits.shape)
-        
-        return logits
-
-"""
-input=torch.randn(1,3,224,224)
-gpqModel=GPQModel(10,16,12,12)
-extractedFeatures=gpqModel.featureExtractor(input,True)
-logits=gpqModel.classifier(extractedFeatures,gpqModel.C)
-print(extractedFeatures.shape)
-print(logits.shape)
-"""
 
 def flipGradient(x,l=1.0):
     #positivePath=torch.tensor(x*torch.tensor(l+1).type(torch.FloatTensor),requires_grad=False)
@@ -193,20 +119,21 @@ def NPQLoss(labelsSimilarity,embeddingX,embeddingQ,numCodeBooks,regLambda=0.002)
     #print("Similarity : ",labelsSimilarity.shape)
     #print("Log softmax : ",F.log_softmax(logits,-1).shape)
 
-    #lossValue=torch.sum(-torch.from_numpy(labelsSimilarity) * F.log_softmax(logits,-1),-1)
-    lossValue=torch.mean(-labelsSimilarity * F.log_softmax(logits,-1),-1)
+    lossValue=torch.sum(-labelsSimilarity * F.log_softmax(logits,-1),-1)
+    #meanLoss =  torch.nn.functional.cross_entropy(logits, labelsSimilarity.long())
     #print("Loss value : ",lossValue)
     meanLoss=lossValue.mean()
     #print("Mean loss : ",meanLoss)
 
     return meanLoss+l2Loss
-  
+ 
 def CLSLoss(label,logits):
     lossValue=torch.sum(-label * F.log_softmax(logits,-1),-1)
     meanLoss=lossValue.mean()
     return meanLoss
 
 def SMELoss(features,centroids,numSegments):
+    
     #print("features shape : ",features.shape,"  centroids shape : ",centroids.shape)
     x=torch.split(features,numSegments,dim=1)
     y=torch.split(centroids,numSegments,dim=1)

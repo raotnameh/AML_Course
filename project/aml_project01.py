@@ -39,12 +39,12 @@ def find_PQ_Table(Z,n_codebook,gallery_x,query_x):
     
     D_Z = np.zeros((Z.shape[0], n_codebook), dtype=np.float32)
 
-    gallery_x_split = np.split(gallery_x, n_codebook, 1)
+    gallery_x_split = np.split(gallery_x, n_codebook, 1) # 12, (54000,12)
     query_x_split = np.array_split(query_x, n_codebook,1)
-   
-    Z_split = np.split(Z.detach().cpu().numpy(),n_codebook, 1)
+    print(Z.shape,"Z Shape")  
+    Z_split = np.split(Z.detach().numpy(),n_codebook, 1)
     D_Z_split = np.split(D_Z, n_codebook, 1)
-    Dpq = np.zeros((query_x.shape[0], gallery_x.shape[0]), dtype=np.float32)
+    Dpq = np.zeros((query_x.shape[0], gallery_x.shape[0]), dtype=np.float32) # 1000,54000
 
     for i in range(query_x.shape[0]):
         for j in range(n_codebook):
@@ -54,15 +54,15 @@ def find_PQ_Table(Z,n_codebook,gallery_x,query_x):
                 y = D_Z_split[j][gallery_x_split[j]]
             else:
                 y = np.add(y, D_Z_split[j][gallery_x_split[j]])
-        #print(y.shape)
-	#Dpq[i,:] = np.squeeze(y)
+        #print(y.shape)  # shape: 1000,12,1
+        Dpq[i,:] = np.squeeze(y)
     return Dpq
 
 
 
 def Image_Retrieval(model,Z_table,n_codebook,db_x,test_x,similarity,k):
  
-  #db_x=db_x[:1000]
+  db_x=db_x[:1000]
   training_iteration=len(db_x)//batch_size
   
   for iteration in range(training_iteration-1):
@@ -77,6 +77,7 @@ def Image_Retrieval(model,Z_table,n_codebook,db_x,test_x,similarity,k):
    else:
      feature_S=np.concatenate((feature_S,model.featureExtractor(fet).detach().numpy()),axis=0)  
    print(feature_S.shape)
+  print(feature_S.sum())  
   index=(training_iteration+1)*batch_size - len(db_x)
    
    #for the last batch
@@ -122,20 +123,9 @@ def Image_Retrieval(model,Z_table,n_codebook,db_x,test_x,similarity,k):
   gallery_x=feature_S.astype(int)
   query_x=feature_T
   Sorted_PQ_table=np.argsort((find_PQ_Table(Z_table,n_codebook,gallery_x,query_x).T),axis=0)
-
+  print(Sorted_PQ_table.shape)
   mean_average_precision=cat_apcal(similarity,Sorted_PQ_table,k)
   print(mean_average_precision)
   return mean_average_precision
 
-
-#loading and testing the model
-model=GPQModel()
-checkpoint = torch.load('GPQModel.pth.tar')
-model.load_state_dict(checkpoint['modelStateDict'])
-print(checkpoint.keys())
-Gallery_x, Query_x = prepare_Data(data_dir, False)
-label_Similarity = csr_matrix(scipy.io.loadmat("data/cifar10/cifar10_Similarity.mat")['label_Similarity'])
-similarity = label_Similarity.todense()
-
-Image_Retrieval(model,checkpoint['Z'],12,Gallery_x,Query_x,similarity,54000)
 
