@@ -7,7 +7,7 @@ from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 import torch
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 device = torch.device("cuda")
 # Dataset path
 # Source: 5,000, Target: 54,000
@@ -17,9 +17,10 @@ data_dir = 'data/cifar10'
 
 # For training
 model_save_path = 'models/'
+do_val = False
 
 # For evaluation
-weights_path = 'models/GPQ.pth'
+weights_path = None #'models/GPQ.pth'
 cifar10_label_sim_path = 'cifar10/cifar10_Similarity.mat'
 
 
@@ -30,8 +31,8 @@ n_DB = 54000
 
 'Hyperparameters for training'
 # Training epochs, 1 epoch represents training all the source data once
-total_epochs = 21
-batchSize = 500
+total_epochs = 10000
+batchSize = 1
 
 # test and save model for every test_term-th epoch.
 test_term = 20
@@ -56,5 +57,5 @@ alpha = 20.0
 beta = 4
 
 # lam1, 2: loss function balancing parameters
-lam_1 = 0.1
-lam_2 = 10
+lam_1 = 0.5
+lam_2 = 0.1

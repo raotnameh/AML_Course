@@ -70,7 +70,7 @@ class classifier_(nn.Module):
         
     def forward(self, x):
         x_ = x.split(self.n_book,1)
-        c_ = (intranorm(self.prototypes.state_dict()['weight'], n_book)*beta).T.split(self.n_book,0)
+        c_ = (intranorm(self.prototypes.state_dict()['weight'], n_book)).T.split(self.n_book,0)
         for i in range(self.n_book):
             sub_res = torch.matmul(x_[i], c_[i]).unsqueeze(-1)
             if i == 0: res = sub_res

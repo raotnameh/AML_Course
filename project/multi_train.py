@@ -1,19 +1,25 @@
 from config import *
+import torch
+import horovod.torch as hvd
 from data.data_loader import *
 from model import *
 from utils import *
 import torch.optim as optim
-    
+
+hvd.init()
+torch.cuda.set_device(hvd.local_rank())
 if __name__ == '__main__':
     #Dataloader
     Source_x, Source_y, Target_x = prepare_Data(data_dir, True)
-    source = torch.utils.data.DataLoader([(Source_x[i], Source_y[i]) for i in range(len(Source_x))],batch_size=batchSize, shuffle=True)
-    target = torch.utils.data.DataLoader(Target_x,batch_size=batchSize,shuffle=True)
-
-    Gallery_x, Query_x = prepare_Data(data_dir, False)
-    gallery = torch.utils.data.DataLoader(Gallery_x,batch_size=2*batchSize)
-    query = torch.utils.data.DataLoader(Query_x,batch_size=2*batchSize)
-    similarity = csr_matrix(scipy.io.loadmat("data/cifar10/cifar10_Similarity.mat")['label_Similarity']).todense()
+    train_sampler = torch.utils.data.distributed.DistributedSampler([(Source_x[i], Source_y[i]) for i in range(len(Source_x))], num_replicas=hvd.size(), rank=hvd.rank())
+    source = torch.utils.data.DataLoader([(Source_x[i], Source_y[i]) for i in range(len(Source_x))],batch_size=batchSize, sampler=train_sampler)
+    target_sampler = torch.utils.data.distributed.DistributedSampler(Target_x, num_replicas=hvd.size(), rank=hvd.rank())
+    target = torch.utils.data.DataLoader(Target_x,batch_size=batchSize,sampler=train_sampler)
+    
+    # Gallery_x, Query_x = prepare_Data(data_dir, False)
+    # gallery = torch.utils.data.DataLoader(Gallery_x,batch_size=2*batchSize)
+    # query = torch.utils.data.DataLoader(Query_x,batch_size=2*batchSize)
+    # similarity = csr_matrix(scipy.io.loadmat("data/cifar10/cifar10_Similarity.mat")['label_Similarity']).todense()
 
     #models
     model = features_(net1, net2).to(device)
@@ -25,6 +31,12 @@ if __name__ == '__main__':
     class_optim = optim.Adam(classifier.parameters(),lr=0.002,weight_decay=0.00001,amsgrad=True)
     model_optim = optim.Adam(model.parameters(),lr=0.0002,weight_decay=0.00001,amsgrad=True)
     soft_optim = optim.Adam(softassignment.parameters(),lr=0.002,weight_decay=0.00001,amsgrad=True)
+
+    class_optim = hvd.DistributedOptimizer(class_optim, named_parameters=classifier.named_parameters())
+    model_optim = hvd.DistributedOptimizer(model_optim, model.named_parameters())
+    soft_optim = hvd.DistributedOptimizer(soft_optim ,softassignment.named_parameters())
+
+    optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
 
     if weights_path:
         print("Loading weights")
